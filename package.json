@@ -1,11 +1,12 @@
 {
   "name": "dsh-taskmirror",
-  "version": "0.2.0",
-  "description": "Post-task 9-dimension retrospective hook script for dsh-hooks (DeepSeek Harness)",
+  "version": "0.3.0",
+  "description": "Post-task retrospective for DeepSeek Harness (DSH): snapshot recorder + optional Stop hard gate",
   "type": "module",
   "main": "scripts/taskmirror.mjs",
   "files": [
     "scripts/taskmirror.mjs",
+    "scripts/taskmirror-reflect.mjs",
     "examples/cordis.patch.yml"
   ],
   "bin": {
