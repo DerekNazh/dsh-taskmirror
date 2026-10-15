@@ -56,7 +56,41 @@ DSH turn 结束
 
 ## 安装
 
-### 1. 把 dsh-hooks 装进目标 profile
+先决定你要哪条路——**两条路互相独立，可以只装一条**：
+
+| 你要的效果 | 走哪条路 | 装什么 |
+|---|---|---|
+| 任务后自动留复盘快照 | ① 记录 | `dsh-hooks` |
+| **让模型真的去复盘** | ② 全局规则（**推荐**） | 什么都不用装，写一句规则即可 |
+| 硬性阻止回合结束 | ③ 硬门禁（可选，有死循环风险） | `dsh-hooks-claude-code` |
+
+> ② 是首选：复杂度最低、无死循环风险、且规则本身可被知识库单一维护。
+> ③ 只在该规范要求「硬门禁」时才启用。
+
+### ② 推荐：写全局规则（不装任何插件）
+
+把规则写进 **`$DSH_HOME/AGENTS.md`**（DSH 的 `agent-instructions` 插件每轮注入它；
+本机 `DSH_HOME=D:\dsh-data`，即 `D:\dsh-data\AGENTS.md`）。内容一句话即可：
+
+```markdown
+## 任务结束时的复盘（强制）
+
+**大任务执行结束后，必须先去知识库读《耗时复盘规范》，并按其实施复盘；非最优方案则治本优化。**
+
+规范位置：`<你的知识库>/content/engineering/guides/耗时复盘规范.md`
+复盘结论写进最终答复末尾。
+```
+
+要点：
+- **不要在规则里重复抄规范内容**——规范是单一真相源，改规范即改规则。
+- 规则写「去读哪个文档 + 照着做」，而不是「要做 A、B、C」。
+- 改完无需重启：实测 DSH 会热加载并推 `Updated instructions from: …`。
+
+验证规则是否注入（L1）：新会话的 system prompt 里能看到规则原文。
+
+### ① 记录：装 dsh-hooks
+
+##### 1. 把 dsh-hooks 装进目标 profile
 
 ```bash
 dsh plugin --profile <profile> add github:PeterBon/dsh-hooks
@@ -72,12 +106,12 @@ cd $env:DSH_HOME\profiles\desktop
 pnpm add github:PeterBon/dsh-hooks
 ```
 
-### 2. 放置本脚本
+##### 2. 放置本脚本
 
 脚本不需要装进 profile 的 `node_modules`（它不是 cordis 插件）。
 放到任意稳定路径即可，例如 `~/.agents/skills/dsh-taskmirror/scripts/taskmirror.mjs`。
 
-### 3. 把 hook 配置写进 profile 的 `cordis.patch.yml`
+##### 3. 把 hook 配置写进 profile 的 `cordis.patch.yml`
 
 直接复制 [`examples/cordis.patch.yml`](examples/cordis.patch.yml) 的内容。
 目标文件是 **`$DSH_HOME/profiles/<profile>/cordis.patch.yml`**。
@@ -87,7 +121,7 @@ pnpm add github:PeterBon/dsh-hooks
 > （后者是 CLI 默认 home，若 `DSH_HOME` 被改过就与运行时不是同一个）。
 > 用 `dsh` 进程自己的环境变量确认：`DSH_PROFILE_DIR`。
 
-### 三条硬规则（踩过坑才有这版）
+#### 三条硬规则（踩过坑才有这版）
 
 | # | 规则 | 原因 |
 |---|---|---|
@@ -97,6 +131,37 @@ pnpm add github:PeterBon/dsh-hooks
 
 （规则来源：`@deepseek-ai/dsh-app-boot/lib/index.js` — insert 分支会把不带 id 的
 insert 直接追加到根条目列表。）
+
+### ③ 硬门禁（可选）
+
+装 `@deepseek-ai/dsh-hooks-claude-code`（DSH 自带，在安装目录里，**不需要 pnpm 安装**），
+指向一个 Claude Code 格式的 `hooks.json`：
+
+```yaml
+- insert:
+    - id: hooks-claude-code
+      name: "@deepseek-ai/dsh-hooks-claude-code"
+      config:
+        configPath: <你的 hooks.json 路径>
+        defaultTimeoutMs: 20000
+```
+
+`hooks.json` 内容：
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command",
+          "command": "node \"<本仓库>/scripts/taskmirror-reflect.mjs\"",
+          "timeout": 20 } ] }
+    ]
+  }
+}
+```
+
+⚠️ 启用前**务必先读**「`taskmirror-reflect.mjs` 的安全设计」一节——它能阻止回合结束，
+写错会卡住会话。
 
 ---
 
