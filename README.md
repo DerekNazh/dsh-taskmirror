@@ -1,15 +1,26 @@
 # dsh-taskmirror
 
-> **Post-task 9-dimension retrospective hook for DeepSeek Harness (DSH)**
+> **Post-task retrospective for DeepSeek Harness (DSH)**
 >
-> 每当一个大任务结束，自动触发 9 维自检，并把复盘沉淀到 `~/.claude/memory/dsh-taskmirror/<sessionId>.md`。
+> 任务结束后自动留一份复盘快照，并提供可选的「硬门禁」实现（阻止回合结束、强制自检）。
 
-本仓库只提供一个 **hook 脚本**，不含 cordis 插件代码；触发由社区插件
-[dsh-hooks](https://github.com/PeterBon/dsh-hooks)（`0.14.4`，配置驱动的生命周期 hooks 引擎）负责。
+本仓库提供两个独立脚本，**不要混用**：
+
+| 脚本 | 角色 | 触发方式 | 是否干预模型 |
+|---|---|---|---|
+| `scripts/taskmirror.mjs` | **记录**：写复盘快照到 `~/.claude/memory/dsh-taskmirror/<sid>.md` | `dsh-hooks` 的 `turn/end` | ❌ 纯留痕 |
+| `scripts/taskmirror-reflect.mjs` | **干预**：阻止回合结束，把 9 维自检要求喂回模型 | `dsh-hooks-claude-code` 的 `Stop` | ✅ 强制再跑一步 |
+
+> **推荐做法**：真正「让模型去复盘」靠**全局规则**（`$DSH_HOME/AGENTS.md` 里写一句
+> 「大任务结束后去知识库读《耗时复盘规范》并照做」），而不是靠钩子拦截。钩子拦截
+> 复杂度高、有死循环风险，只在该规范要求「硬门禁」时才启用。
+> 本仓库的 `taskmirror.mjs` 只负责机器留痕，**它不替代复盘本身**。
 
 ---
 
 ## 工作原理
+
+### ① 记录（taskmirror.mjs）
 
 ```
 DSH turn 结束
@@ -23,6 +34,23 @@ DSH turn 结束
 
 上下文通过 `DSH_HOOK_*` 环境变量传入（不拼接进 shell 字符串，防注入）。
 脚本只读这些变量、只写一个 markdown 文件，**零 npm 依赖**。
+
+### ② 干预（taskmirror-reflect.mjs，可选）
+
+```
+回合即将结束
+   └─ agent-loop await dispatch.serial('agent/turn-stopping')   ← 串行等待
+        └─ dsh-hooks-claude-code 桥接层执行 Stop 钩子
+             └─ node scripts/taskmirror-reflect.mjs
+                  ├─ 退出 2 + stderr  → decision=block → 归一 "deny"
+                  │                     → agent.steer(stderr)，模型被要求先自检
+                  └─ 退出 0           → 放行
+```
+
+机制已逐环从 DSH 源码验证（`dsh-agent-loop/lib/index.js:999,1005`、
+`dsh-hook-protocol` 的 `BLOCKING_EXIT_CODE = 2`、`merge.js` 的 `rank("block") = 3`）。
+**风险**：桥接层把 `stop_hook_active` 硬编码为 `false`，宿主不提供防死循环，
+所以防重复必须自己做（见下）。
 
 ---
 
@@ -162,14 +190,18 @@ Get-ChildItem ~\.claude\memory\dsh-taskmirror\
 node --test "test/*.spec.mjs"
 ```
 
-17 个用例，**全部走隔离沙箱**：每个用例通过 `TASKMIRROR_*` 把状态重定向到临时目录，
-所以两个 spec 文件可以并行跑而不互相干扰，也**不会读写用户真实的
-`~/.claude/memory/dsh-taskmirror/` 与 `~/.dsh/taskmirror-cooldown.json`**
-（有一个专门用例断言这一点）。
+**26 个用例**（`taskmirror.mjs` 17 + `taskmirror-reflect.mjs` 9），**全部走隔离沙箱**：
+每个用例通过 `TASKMIRROR_*` 把状态重定向到临时目录，所以各 spec 可以并行跑而不互相干扰，
+也**不会读写用户真实的 `~/.claude/memory/dsh-taskmirror/`、`~/.dsh/taskmirror-cooldown.json`
+与 `~/.dsh/dsh-hooks/history.jsonl`**（有一个专门用例断言这一点）。
 
-覆盖：完整路径写入、subagent/fork/未知 reason 跳过、max-tokens/aborted/error 不跳过、
-cooldown 命中与互不影响、中文/emoji/换行/超长截断（精确 2000）、空 content 兜底、
+`taskmirror.mjs` 覆盖：完整路径写入、subagent/fork/未知 reason 跳过、max-tokens/aborted/error
+不跳过、cooldown 命中与互不影响、中文/emoji/换行/超长截断（精确 2000）、空 content 兜底、
 空 sessionId、5 路并发、多级目录创建、9 维顺序、沙箱隔离性。
+
+`taskmirror-reflect.mjs` 覆盖：首次阻止（exit 2 + stderr 含 9 维）、同回合第二次放行、
+新 `turn/end` 后可再次阻止、连打 10 次最多拦 1 次、间隔兜底、尊重 `stop_hook_active`、
+**stdin 带 BOM 仍能解析**、**stdin 畸形必须放行**、不同 session 互不影响。
 
 > 注：`node --test test/`（目录形式）在 Node 24 上不被接受，需用 glob 形式。
 
@@ -180,20 +212,31 @@ dsh-taskmirror/
 ├── package.json               — 无运行时依赖；bin: dsh-taskmirror
 ├── README.md
 ├── examples/
-│   └── cordis.patch.yml       — 直接复制到 profile 的 hook 配置模板
+│   └── cordis.patch.yml       — 复制到 profile 的 dsh-hooks 配置模板（记录用）
 ├── scripts/
-│   └── taskmirror.mjs         — 9 维复盘主逻辑（145 行）
+│   ├── taskmirror.mjs         — ① 复盘快照（记录）
+│   └── taskmirror-reflect.mjs — ② Stop 硬门禁（干预，可选）
 └── test/
     ├── helpers.mjs            — 隔离沙箱 + spawn 封装
     ├── plugin.spec.mjs        — 6 个单元用例
-    └── stress.spec.mjs        — 11 个压测用例
+    ├── stress.spec.mjs        — 11 个压测用例
+    └── reflect.spec.mjs       — 9 个硬门禁用例
 ```
+
+## `taskmirror-reflect.mjs` 的安全设计
+
+因为它能**阻止回合结束**，写错会卡死会话，所以每条都是刻意的：
+
+| 保护 | 做法 | 为什么 |
+|---|---|---|
+| 防死循环（主） | 数 `history.jsonl` 里本 session 的 `turn/end` 条数；未增长 = 同一回合 → 放行 | 桥接层 `stop_hook_active` 恒为 `false`，宿主不提供防重入 |
+| 防死循环（兜底） | 两次阻止至少间隔 `TASKMIRROR_MIN_INTERVAL_MS`（默认 60s） | history 缺失/未更新时仍不会紧凑循环 |
+| **fail-open** | 认不出 `session_id` → 放行；任何异常 → 放行 | 无法去重就拦 = 无界循环，宁可漏提醒 |
+| BOM 容错 | stdin 先剥 `\uFEFF` 与首尾空白 | 某些宿主会在 JSON 前加 BOM，否则解析失败 → 去重静默失效 |
+| 尊重宿主 | `stop_hook_active === true` → 放行 | 宿主若自己实现了防重入，不要覆盖 |
 
 ## 局限 / 待办
 
-- **只写文件，不回注上下文**：脚本产出的是给人看的复盘文件，不会作为 reminder
-  注入 agent 的下一轮。若要「模型自己执行 9 维自检」，需要 hook 用
-  `input: 'stdin'` 取完整上下文，或改走 `agent/turn-starting` 之类的回合边界事件。
 - **`duration` 常为空**：本机实测 `DSH_HOOK_DURATION_MS` 未在 `turn/end` 时送达
   （显示 `?ms`），原因待查；其他 `DSH_HOOK_*` 变量正常。
 - **profile patch 可能被 GUI 重写**：从 DSH 设置面板改设置时，profile 的
