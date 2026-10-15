@@ -1,0 +1,7 @@
+# dsh-taskmirror 是个 hook handler script，由 dsh-hooks 在 turn/end 触发。
+# 用户需要在 profile 的 cordis.patch.yml 加 hook 配置指向本脚本。
+# 此处只注册插件名（让 DSH 知道有这个插件）。
+
+- insert:
+    - id: dsh-taskmirror
+      name: dsh-taskmirror

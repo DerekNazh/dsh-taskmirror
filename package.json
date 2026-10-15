@@ -1,0 +1,27 @@
+{
+  "name": "dsh-taskmirror",
+  "version": "0.1.0",
+  "description": "Post-task 9-dimension retrospective script for dsh-hooks",
+  "type": "module",
+  "main": "scripts/taskmirror.mjs",
+  "files": [
+    "scripts/taskmirror.mjs",
+    "cordis.patch.yml"
+  ],
+  "bin": {
+    "dsh-taskmirror": "scripts/taskmirror.mjs"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.spec.mjs\""
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-hooks",
+    "taskmirror",
+    "retrospective"
+  ],
+  "license": "MIT"
+}
