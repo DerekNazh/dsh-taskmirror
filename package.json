@@ -1,12 +1,12 @@
 {
   "name": "dsh-taskmirror",
-  "version": "0.1.0",
-  "description": "Post-task 9-dimension retrospective script for dsh-hooks",
+  "version": "0.2.0",
+  "description": "Post-task 9-dimension retrospective hook script for dsh-hooks (DeepSeek Harness)",
   "type": "module",
   "main": "scripts/taskmirror.mjs",
   "files": [
     "scripts/taskmirror.mjs",
-    "cordis.patch.yml"
+    "examples/cordis.patch.yml"
   ],
   "bin": {
     "dsh-taskmirror": "scripts/taskmirror.mjs"

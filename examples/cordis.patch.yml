@@ -1,0 +1,47 @@
+# ============================================================================
+# dsh-taskmirror — 复制这段到你 profile 的 cordis.patch.yml
+# ============================================================================
+#
+# 目标文件（不是本文件）：$DSH_HOME/profiles/<profile>/cordis.patch.yml
+# 本机实测路径：D:\dsh-data\profiles\desktop\cordis.patch.yml
+#
+# 三条硬规则（来自 DSH dsh-app-boot 的实现，踩过坑才有这版）：
+#
+#   1. dsh-hooks 只进 dependencies 不会自动挂载。DSH 只应用
+#      `dsh.profile.bundles` 里那些包自带的 patch（见 dsh-app-boot/lib/index.js
+#      的 profile 文档注释）。所以必须写 insert。
+#
+#   2. 新增插件必须用「不带 id 的 insert」。patch 层默认只按 id 覆盖「已存在」
+#      条目，写 `- id: dsh-hooks` 而该条目不存在时会 warn "entry not found" 并跳过。
+#      不带 id 的 insert 会被直接追加到根条目列表。
+#
+#   3. config 直接写在 insert 的行内，不要另起一个 `- id: dsh-hooks` 块
+#      （那样是「覆盖已存在条目」，第 2 条已说明它不存在）。
+#
+# 生效时机：hooks 列表在插件 apply 时读取。desktop profile 声明了
+# `patchReload: live`，实测改完本文件后 DSH 会热加载并挂载（无需重启）；
+# 其他 profile 可能需要重启 DSH。
+# ============================================================================
+
+- insert:
+    - id: dsh-hooks
+      name: dsh-hooks
+      config:
+        # 同一 hook 连续失败 3 次 → 发射 hook/failed 合成事件（下面第三条接桌面通知）
+        failedAlertThreshold: 3
+        hooks:
+          # 大任务完成 → 触发 9 维自检复盘
+          - on: 'turn/end'
+            when: 'completed'
+            run: 'node "C:\Users\Administrator\.agents\skills\dsh-taskmirror\scripts\taskmirror.mjs"'
+            timeoutMs: 10000
+
+          # 撞上下文上限的半截任务也复盘（这类 turn 的复盘价值最高）
+          - on: 'turn/end'
+            when: 'max-tokens'
+            run: 'node "C:\Users\Administrator\.agents\skills\dsh-taskmirror\scripts\taskmirror.mjs"'
+            timeoutMs: 10000
+
+          # hook 自身连续失败 3 次 → 桌面通知告警，避免静默失效
+          - on: 'hook/failed'
+            notify: { channel: 'desktop' }

@@ -5,13 +5,10 @@
  * 由 dsh-hooks 在 turn/end 触发。
  * 读 DSH_HOOK_* 环境变量，写 9 维自检 reminder 到 ~/.claude/memory/dsh-taskmirror/<sid>.md
  *
- * Usage (在 profile 的 cordis.patch.yml):
- *
- *   hooks:
- *     - on: 'turn/end'
- *       when: 'completed'
- *       run: 'node ~/.agents/skills/dsh-taskmirror/scripts/taskmirror.mjs'
- *       timeoutMs: 10000
+ * 用法：把 examples/cordis.patch.yml 的内容复制进 profile 的 cordis.patch.yml
+ * （$DSH_HOME/profiles/<profile>/cordis.patch.yml）。注意必须是「不带 id 的 insert」，
+ * config 写在 insert 行内——写成 `- id: dsh-hooks` 会被 app-boot 当作「覆盖已存在
+ * 条目」而跳过（entry not found）。详见 README「三条硬规则」。
  *
  * 9 维自检参照拾光客户端 architecture-review-scorecard.md
  */
@@ -34,8 +31,11 @@ const NINE_DIMENSION_PROMPT = `9 维自检：
 每项 1 句话；如发现违规，把沉淀写到 ~/.claude/memory/dsh-taskmirror/<sid>.md`
 
 const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000
-const MEMORY_DIR = path.join(os.homedir(), '.claude', 'memory', 'dsh-taskmirror')
-const COOLDOWN_FILE = path.join(os.homedir(), '.dsh', 'taskmirror-cooldown.json')
+// 状态路径可用环境变量覆盖：便于测试隔离（不污染真实状态）或自定义落盘位置。
+const MEMORY_DIR = process.env.TASKMIRROR_MEMORY_DIR
+  ?? path.join(os.homedir(), '.claude', 'memory', 'dsh-taskmirror')
+const COOLDOWN_FILE = process.env.TASKMIRROR_COOLDOWN_FILE
+  ?? path.join(os.homedir(), '.dsh', 'taskmirror-cooldown.json')
 
 function readDshHookEnv() {
   return {
@@ -90,7 +90,8 @@ function buildRetrospective(ctx) {
     `# TaskMirror 复盘`,
     ``,
     `**生成时间**：${ctx.timestamp}`,
-    `**session**：${ctx.sessionName || ctx.sessionId || 'unknown'}`,
+    `**session**：${ctx.sessionName || 'unknown'}`,
+    `**sessionId**：${ctx.sessionId || 'unknown'}`,
     `**turn**：${ctx.turn || '?'}`,
     `**reason**：${ctx.reason || 'unknown'}`,
     `**cwd**：${ctx.cwd || 'unknown'}`,
