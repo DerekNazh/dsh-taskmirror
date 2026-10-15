@@ -1,253 +1,67 @@
 # dsh-taskmirror
 
-> **Post-task retrospective for DeepSeek Harness (DSH)**
->
-> 任务结束后自动留一份复盘快照，并提供可选的「硬门禁」实现（阻止回合结束、强制自检）。
+> ⚠️ **本项目已降级为实验产物，不再作为复盘方案。**
 
-本仓库提供两个独立脚本，**不要混用**：
+## 为什么作废
 
-| 脚本 | 角色 | 触发方式 | 是否干预模型 |
-|---|---|---|---|
-| `scripts/taskmirror.mjs` | **记录**：写复盘快照到 `~/.claude/memory/dsh-taskmirror/<sid>.md` | `dsh-hooks` 的 `turn/end` | ❌ 纯留痕 |
-| `scripts/taskmirror-reflect.mjs` | **干预**：阻止回合结束，把 9 维自检要求喂回模型 | `dsh-hooks-claude-code` 的 `Stop` | ✅ 强制再跑一步 |
+公司知识库里**已有正式且更完整的复盘方案**：
 
-> **推荐做法**：真正「让模型去复盘」靠**全局规则**（`$DSH_HOME/AGENTS.md` 里写一句
-> 「大任务结束后去知识库读《耗时复盘规范》并照做」），而不是靠钩子拦截。钩子拦截
-> 复杂度高、有死循环风险，只在该规范要求「硬门禁」时才启用。
-> 本仓库的 `taskmirror.mjs` 只负责机器留痕，**它不替代复盘本身**。
-
----
-
-## 工作原理
-
-### ① 记录（taskmirror.mjs）
-
-```
-DSH turn 结束
-   └─ dsh-hooks 收到 turn/end
-        └─ 匹配 when: completed | max-tokens
-             └─ spawn: node scripts/taskmirror.mjs   (环境变量携带上下文)
-                  ├─ 跳过 subagent / fork / 未知 reason
-                  ├─ 同 session 5 分钟 cooldown
-                  └─ 写 ~/.claude/memory/dsh-taskmirror/<sessionId>.md
-```
-
-上下文通过 `DSH_HOOK_*` 环境变量传入（不拼接进 shell 字符串，防注入）。
-脚本只读这些变量、只写一个 markdown 文件，**零 npm 依赖**。
-
-### ② 干预（taskmirror-reflect.mjs，可选）
-
-```
-回合即将结束
-   └─ agent-loop await dispatch.serial('agent/turn-stopping')   ← 串行等待
-        └─ dsh-hooks-claude-code 桥接层执行 Stop 钩子
-             └─ node scripts/taskmirror-reflect.mjs
-                  ├─ 退出 2 + stderr  → decision=block → 归一 "deny"
-                  │                     → agent.steer(stderr)，模型被要求先自检
-                  └─ 退出 0           → 放行
-```
-
-机制已逐环从 DSH 源码验证（`dsh-agent-loop/lib/index.js:999,1005`、
-`dsh-hook-protocol` 的 `BLOCKING_EXIT_CODE = 2`、`merge.js` 的 `rank("block") = 3`）。
-**风险**：桥接层把 `stop_hook_active` 硬编码为 `false`，宿主不提供防死循环，
-所以防重复必须自己做（见下）。
-
----
-
-## 安装
-
-先决定你要哪条路——**两条路互相独立，可以只装一条**：
-
-| 你要的效果 | 走哪条路 | 装什么 |
+| | 本仓库（作废） | 知识库《耗时复盘规范》（正式） |
 |---|---|---|
-| 任务后自动留复盘快照 | ① 记录 | `dsh-hooks` |
-| **让模型真的去复盘** | ② 全局规则（**推荐**） | 什么都不用装，写一句规则即可 |
-| 硬性阻止回合结束 | ③ 硬门禁（可选，有死循环风险） | `dsh-hooks-claude-code` |
+| 权威出处 | ❌ 无——9 维维度是自拟的，引用的来源文件在本机不存在 | ✅ owner: 暗宇宙，权威等级: 权威 |
+| 复盘口径 | 代码质量 9 维 | **四段耗时拆解**（模型思考/工具执行/等你回复/其他）+ 收尾门禁 + 标准沉淀闭环 |
+| 实现 | 本仓库 2 个脚本 | `D:\claude-code\hooks\task-timing.mjs`（58KB，30 例测试，已适配 DSH 多帧 zstd 日志） |
+| 报告 | 一份 markdown 清单 | `latest.md` / `history.jsonl` / `PLAYBOOK.md` |
+| 触发 | 钩子 | 钩子（同机制，但踩过的坑都已处理） |
 
-> ② 是首选：复杂度最低、无死循环风险、且规则本身可被知识库单一维护。
-> ③ 只在该规范要求「硬门禁」时才启用。
+**规范位置**：`D:\暗宇宙\knowledge\content\engineering\guides\耗时复盘规范.md`
 
-### ② 推荐：写全局规则（不装任何插件）
+## 现在的做法（只用全局规则，不用钩子）
 
-把规则写进 **`$DSH_HOME/AGENTS.md`**（DSH 的 `agent-instructions` 插件每轮注入它；
-本机 `DSH_HOME=D:\dsh-data`，即 `D:\dsh-data\AGENTS.md`）。内容一句话即可：
+在 **`$DSH_HOME/AGENTS.md`** 写一行即可：
 
 ```markdown
-## 任务结束时的复盘（强制）
-
-**大任务执行结束后，必须先去知识库读《耗时复盘规范》，并按其实施复盘；非最优方案则治本优化。**
-
-规范位置：`<你的知识库>/content/engineering/guides/耗时复盘规范.md`
-复盘结论写进最终答复末尾。
+**大任务执行结束后，必须先去知识库读《耗时复盘规范》，并按其实施复盘。**
+规范位置：`<知识库>/content/engineering/guides/耗时复盘规范.md`
 ```
 
 要点：
-- **不要在规则里重复抄规范内容**——规范是单一真相源，改规范即改规则。
-- 规则写「去读哪个文档 + 照着做」，而不是「要做 A、B、C」。
-- 改完无需重启：实测 DSH 会热加载并推 `Updated instructions from: …`。
+- **不挂钩子、不额外注入**——规则只写「去读哪个文档 + 照着做」。
+- 规范是**单一真相源**：改规范即改规则，规则里不重复抄内容。
+- 改完无需重启：实测 DSH 热加载并推 `Updated instructions from: …`。
+- 验证方法见《全局规则触发测试协议》（L1 注入 / L2 检索 / L3 复盘 / L4 稳定性四层）。
 
-验证规则是否注入（L1）：新会话的 system prompt 里能看到规则原文。
+## 本仓库保留了什么
 
-### ① 记录：装 dsh-hooks
-
-##### 1. 把 dsh-hooks 装进目标 profile
-
-```bash
-dsh plugin --profile <profile> add github:PeterBon/dsh-hooks
+```
+dsh-taskmirror/
+├── scripts/taskmirror.mjs      — 实验：写复盘快照（记录型钩子）
+├── scripts/verify-self-contained.mjs
+├── test/                       — 17 例（隔离沙箱）
+├── retired/                    — 已废弃的 Stop 硬门禁实现
+│   ├── taskmirror-reflect.mjs
+│   └── reflect.spec.mjs
+└── README.md
 ```
 
-`<profile>` 是 DSH 实际启动的那个（`$DSH_HOME/profiles/<name>`）。
-在 DSH Desktop 上，本机是 `desktop`，且 **`desktop` profile 由 Electron 独占管理，
-CLI 会拒绝操作它**（`profile "desktop" is managed exclusively by the Electron application`）——
-这种情况直接在 profile 目录里跑 pnpm：
+**不要在生产启用**。保留仅为留存实验结论。
 
-```powershell
-cd $env:DSH_HOME\profiles\desktop
-pnpm add github:PeterBon/dsh-hooks
-```
+### `retired/` 的实验结论（供后续参考）
 
-##### 2. 放置本脚本
+验证过的事实（逐环读 DSH 源码，非照文档想当然）：
 
-脚本不需要装进 profile 的 `node_modules`（它不是 cordis 插件）。
-放到任意稳定路径即可，例如 `~/.agents/skills/dsh-taskmirror/scripts/taskmirror.mjs`。
-
-##### 3. 把 hook 配置写进 profile 的 `cordis.patch.yml`
-
-直接复制 [`examples/cordis.patch.yml`](examples/cordis.patch.yml) 的内容。
-目标文件是 **`$DSH_HOME/profiles/<profile>/cordis.patch.yml`**。
-
-> ⚠️ **位置最容易搞错。** 本机 `DSH_HOME=D:\dsh-data`，所以真实路径是
-> `D:\dsh-data\profiles\desktop\cordis.patch.yml`，**不是** `C:\Users\<你>\.dsh\profiles\...`
-> （后者是 CLI 默认 home，若 `DSH_HOME` 被改过就与运行时不是同一个）。
-> 用 `dsh` 进程自己的环境变量确认：`DSH_PROFILE_DIR`。
-
-#### 三条硬规则（踩过坑才有这版）
-
-| # | 规则 | 原因 |
-|---|---|---|
-| 1 | dsh-hooks 只进 `dependencies` **不会**自动挂载，必须写 `insert` | DSH 只应用 `dsh.profile.bundles` 里各包自带的 patch |
-| 2 | 新增插件必须用**不带 `id` 的 `insert`** | patch 层默认只按 id 覆盖已存在条目；写 `- id: dsh-hooks` 而它不存在时会 warn `entry not found` 并跳过 |
-| 3 | `config` 直接写在 insert 行内 | 见规则 2：另起 `- id: dsh-hooks` 块等于覆盖一个不存在的条目 |
-
-（规则来源：`@deepseek-ai/dsh-app-boot/lib/index.js` — insert 分支会把不带 id 的
-insert 直接追加到根条目列表。）
-
-### ③ 硬门禁（可选）
-
-装 `@deepseek-ai/dsh-hooks-claude-code`（DSH 自带，在安装目录里，**不需要 pnpm 安装**），
-指向一个 Claude Code 格式的 `hooks.json`：
-
-```yaml
-- insert:
-    - id: hooks-claude-code
-      name: "@deepseek-ai/dsh-hooks-claude-code"
-      config:
-        configPath: <你的 hooks.json 路径>
-        defaultTimeoutMs: 20000
-```
-
-`hooks.json` 内容：
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      { "hooks": [ { "type": "command",
-          "command": "node \"<本仓库>/scripts/taskmirror-reflect.mjs\"",
-          "timeout": 20 } ] }
-    ]
-  }
-}
-```
-
-⚠️ 启用前**务必先读**「`taskmirror-reflect.mjs` 的安全设计」一节——它能阻止回合结束，
-写错会卡住会话。
-
----
-
-## 生效与验证
-
-DSH 的 `desktop` profile 声明了 `patchReload: live`，实测改完 `cordis.patch.yml`
-后 **DSH 会热加载并挂载，无需重启**；其他 profile 可能需要重启。
-
-三层验证（本仓库的 0.2.0 就是这样验过的）：
-
-```powershell
-# 1) 插件是否挂载 + hooks 是否按预期解析
-Invoke-RestMethod http://127.0.0.1:19387/dsh-hooks/status | ConvertTo-Json -Depth 4
-#    → ok:true, version 0.14.4, hookCount:3, hooks[...] 列出每条 on/when/run
-
-# 2) 是否真的触发过（dsh-hooks 的执行历史）
-Get-Content ~\.dsh\dsh-hooks\history.jsonl -Tail 10
-#    → {"kind":"run","event":"turn/end","outcome":"spawned",...}
-#      {"kind":"run","event":"turn/end","outcome":"exit-0","exitCode":0,"durationMs":88,...}
-
-# 3) 复盘文件是否真的写出来了
-Get-ChildItem ~\.claude\memory\dsh-taskmirror\
-```
-
-实测记录（2026-10-15，DSH Desktop + desktop profile）：
-
-| 证据 | 结果 |
+| 事实 | 出处 |
 |---|---|
-| `/dsh-hooks/status` | `ok:true`，`version 0.14.4`，`hookCount:3`，三条 hook 与配置一致 |
-| `history.jsonl` | `turn/end` → `spawned` → `exit-0`，`durationMs: 88` |
-| 复盘文件 | `session-<id>.md`，2518 字节，含 9 维 + turn/reason/cwd 元数据 |
-| 触发会话 | 就是当时的会话自身（`DSH_HOOK_SESSION_ID` 与 `DSH_SESSION_ID` 一致） |
+| 回合将结束时**串行等待**钩子 | `dsh-agent-loop/lib/index.js:999` `await dispatch.serial('agent/turn-stopping', …)` |
+| 返回后**重新检查**，钩子可不让循环结束 | 同文件 `:1005` `if (turnEnds && this.inbox.nextStep.length === 0) break;` |
+| 退出码 2 = 阻止，stderr = 理由 | `dsh-hook-protocol`：`BLOCKING_EXIT_CODE = 2` |
+| `block` 归一为 `deny` | `merge.js`：`rank("block") = 3` → `decisionForRank(3) = "deny"` |
+| 桥接层据此 `agent.steer()` | `dsh-hooks-claude-code/lib/index.js:298` |
+| **`stop_hook_active` 恒为 `false`** | 宿主不提供防死循环，上限须自己记 |
+| 桥接只支持 7 类事件 | `SessionStart`/`UserPromptSubmit`/`PreToolUse`/`PostToolUse`/`Stop`/`SubagentStart`/`SubagentStop`（**无 `SessionEnd`**） |
+| `transcript_path` 恒为空字符串 | 脚本须按 `session_id` 自行定位 zstd 会话日志 |
 
----
-
-## 9 维自检内容
-
-- **A** 职责单一性
-- **B** 依赖健康度
-- **C** 测试完备性
-- **D** 改动安全性
-- **E** 体积（800 行上限）
-- **F** 债台账完整度
-- **G** 过程规范度
-- **H** 可推广性
-- **I** 品牌一致性
-
-## 脚本行为细节
-
-- **跳过**：`DSH_HOOK_SUBAGENT=1`（子代理）、`DSH_HOOK_PARENT_SESSION_ID` 非空（fork）、
-  `reason` 不在 `{completed, error, aborted, max-tokens}` 内
-- **cooldown**：同 session 5 分钟内只写一次（状态存 `~/.dsh/taskmirror-cooldown.json`）
-  —— 状态文件在 `~/.dsh`（脚本固定用它），与 `DSH_HOME` 无关
-- **截断**：`DSH_HOOK_CONTENT` 只取前 2000 字符
-- **stdout**：成功 `written: <path>`，跳过 `skipped: <原因>` / `cooldown: ...`，失败非零退出
-
-### 可选环境变量（覆盖落盘位置）
-
-| 变量 | 默认值 | 用途 |
-|---|---|---|
-| `TASKMIRROR_MEMORY_DIR` | `~/.claude/memory/dsh-taskmirror` | 复盘输出目录 |
-| `TASKMIRROR_COOLDOWN_FILE` | `~/.dsh/taskmirror-cooldown.json` | cooldown 状态文件 |
-
-主要给测试隔离用，也可以用来把复盘中转到别的目录。
-
-输出文件结构：
-
-```markdown
-# TaskMirror 复盘
-
-**生成时间**：2026-10-15T04:50:49.035Z
-**session**：<会话标题>
-**sessionId**：session-78b6f146-...
-**turn**：72
-**reason**：completed
-**cwd**：D:\setup_temp\product-marketing_new
-**duration**：?ms
-
-## 9 维自检
-9 维自检：
-- A 职责单一性
-- ...
-
-## 本轮摘要
-<本回合最后一段助手文本，截断 2000 字符>
-```
+**结论**：机制可行，但复杂度高、有死循环风险，且**与既有 `task-timing.mjs` 功能重叠**——没有理由再维护一套。故废弃。
 
 ## 测试
 
@@ -255,68 +69,21 @@ Get-ChildItem ~\.claude\memory\dsh-taskmirror\
 node --test "test/*.spec.mjs"
 ```
 
-**26 个用例**（`taskmirror.mjs` 17 + `taskmirror-reflect.mjs` 9），**全部走隔离沙箱**：
-每个用例通过 `TASKMIRROR_*` 把状态重定向到临时目录，所以各 spec 可以并行跑而不互相干扰，
-也**不会读写用户真实的 `~/.claude/memory/dsh-taskmirror/`、`~/.dsh/taskmirror-cooldown.json`
-与 `~/.dsh/dsh-hooks/history.jsonl`**（有一个专门用例断言这一点）。
+**17 例**，全部走隔离沙箱（通过 `TASKMIRROR_*` 把状态重定向到临时目录），
+不会读写用户真实的 `~/.claude/memory/dsh-taskmirror/` 与 `~/.dsh/taskmirror-cooldown.json`。
 
-`taskmirror.mjs` 覆盖：完整路径写入、subagent/fork/未知 reason 跳过、max-tokens/aborted/error
-不跳过、cooldown 命中与互不影响、中文/emoji/换行/超长截断（精确 2000）、空 content 兜底、
-空 sessionId、5 路并发、多级目录创建、9 维顺序、沙箱隔离性。
-
-`taskmirror-reflect.mjs` 覆盖：首次阻止（exit 2 + stderr 含 9 维）、同回合第二次放行、
-新 `turn/end` 后可再次阻止、连打 10 次最多拦 1 次、间隔兜底、尊重 `stop_hook_active`、
-**stdin 带 BOM 仍能解析**、**stdin 畸形必须放行**、不同 session 互不影响。
+覆盖：完整路径写入、subagent/fork/未知 reason 跳过、max-tokens/aborted/error 不跳过、
+cooldown 命中与互不影响、中文/emoji/换行/超长截断（精确 2000）、空 content 兜底、
+空 sessionId、5 路并发、多级目录创建、沙箱隔离性。
 
 > 注：`node --test test/`（目录形式）在 Node 24 上不被接受，需用 glob 形式。
 
-## 文件清单
-
-```
-dsh-taskmirror/
-├── package.json               — 无运行时依赖；bin: dsh-taskmirror
-├── README.md
-├── examples/
-│   └── cordis.patch.yml       — 复制到 profile 的 dsh-hooks 配置模板（记录用）
-├── scripts/
-│   ├── taskmirror.mjs         — ① 复盘快照（记录）
-│   └── taskmirror-reflect.mjs — ② Stop 硬门禁（干预，可选）
-└── test/
-    ├── helpers.mjs            — 隔离沙箱 + spawn 封装
-    ├── plugin.spec.mjs        — 6 个单元用例
-    ├── stress.spec.mjs        — 11 个压测用例
-    └── reflect.spec.mjs       — 9 个硬门禁用例
-```
-
-## `taskmirror-reflect.mjs` 的安全设计
-
-因为它能**阻止回合结束**，写错会卡死会话，所以每条都是刻意的：
-
-| 保护 | 做法 | 为什么 |
-|---|---|---|
-| 防死循环（主） | 数 `history.jsonl` 里本 session 的 `turn/end` 条数；未增长 = 同一回合 → 放行 | 桥接层 `stop_hook_active` 恒为 `false`，宿主不提供防重入 |
-| 防死循环（兜底） | 两次阻止至少间隔 `TASKMIRROR_MIN_INTERVAL_MS`（默认 60s） | history 缺失/未更新时仍不会紧凑循环 |
-| **fail-open** | 认不出 `session_id` → 放行；任何异常 → 放行 | 无法去重就拦 = 无界循环，宁可漏提醒 |
-| BOM 容错 | stdin 先剥 `\uFEFF` 与首尾空白 | 某些宿主会在 JSON 前加 BOM，否则解析失败 → 去重静默失效 |
-| 尊重宿主 | `stop_hook_active === true` → 放行 | 宿主若自己实现了防重入，不要覆盖 |
-
-## 局限 / 待办
-
-- **`duration` 常为空**：本机实测 `DSH_HOOK_DURATION_MS` 未在 `turn/end` 时送达
-  （显示 `?ms`），原因待查；其他 `DSH_HOOK_*` 变量正常。
-- **profile patch 可能被 GUI 重写**：从 DSH 设置面板改设置时，profile 的
-  `cordis.patch.yml` 会被程序改写。实测发生过条目被覆盖，建议改完 GUI 设置后
-  回查 insert 块是否还在（`/dsh-hooks/status` 的 `hookCount` 是最快的判据）。
-- **`dsh-hooks` CLI 的 profile 路径硬编码为 `~/.dsh`**：其 `dry-run` / `tail` /
-  飞书扫码 / Web GUI 保存都读 `~/.dsh/profiles/<name>/cordis.patch.yml`。
-  当 `DSH_HOME != ~/.dsh`（本机即是）时，这些工具会看错文件——**运行时以
-  `$DSH_HOME/profiles/...` 为准**。
-
 ## 引用
 
-- [PeterBon/dsh-hooks](https://github.com/PeterBon/dsh-hooks) — 配置驱动 lifecycle hooks
-- [DSH hooks 桥接 Discussion #6786](https://github.com/deepseek-ai/deepseek-harness/discussions/6786) — 已知桥接 bug
-- [Discussion #506 agent/turn-starting/aborting](https://github.com/deepseek-ai/deepseek-harness/discussions/506) — 回合边界事件提案
+- 知识库《耗时复盘规范》——**正式方案**，本项目已被它取代
+- 知识库《全局规则触发测试协议》——怎么验证全局规则真的生效
+- [PeterBon/dsh-hooks](https://github.com/PeterBon/dsh-hooks) —— 配置驱动 lifecycle hooks（实验期使用）
+- [DSH hooks 桥接 Discussion #6786](https://github.com/deepseek-ai/deepseek-harness/discussions/6786)
 
 ## 协议
 
